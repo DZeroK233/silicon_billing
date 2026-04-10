@@ -1,0 +1,20 @@
+{
+    "cookie": {
+        "description": "SiliconCloud 登录 Cookie",
+        "type": "string",
+        "default": "",
+        "hint": "填入你抓取到的面板 Cookie"
+    },
+    "x_subject_id": {
+        "description": "请求头 x-subject-id",
+        "type": "string",
+        "default": "",
+        "hint": "填入你的 x-subject-id（如 apdjqglpeo）"
+    },
+    "cron_time": {
+        "description": "每日定时检查与推送时间",
+        "type": "string",
+        "default": "10:00",
+        "hint": "格式如 10:00，即每天上午10点自动播报账单"
+    }
+}

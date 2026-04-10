@@ -5,6 +5,8 @@ from datetime import datetime
 import urllib3
 import requests
 from astrbot.api.all import *
+# 【修复点】显式导入 filter 和 AstrMessageEvent，覆盖 Python 的内置 filter
+from astrbot.api.event import filter, AstrMessageEvent 
 from astrbot.api.message_components import Plain
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 

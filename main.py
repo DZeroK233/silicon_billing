@@ -82,6 +82,9 @@ class SiliconBillingPlugin(Star):
     def fetch_api_data_sync(self, start_time, end_time):
         url = "https://cloud.siliconflow.cn/panel-server/api/v1/bill/items/allocation_aggregate"
         # 这里的 key 必须与 _conf_schema.json 中定义的一致
+        import logging
+        logger = logging.getLogger("astrbot")
+
         headers = {
             "accept": "application/json, text/plain, */*",
             "cookie": self.config.get("cookie", ""),
@@ -106,7 +109,9 @@ class SiliconBillingPlugin(Star):
             }
             try:
                 response = requests.get(url, headers=headers, params=params, verify=False, timeout=10)
-                response.raise_for_status()
+                if response.status_code != 200:
+                    logger.error(f"[SiliconCloud] 账单获取失败(HTTP {response.status_code}): {response.text}")
+                    break
                 data = response.json()
 
                 if data.get("code") == 20000:
@@ -118,10 +123,10 @@ class SiliconBillingPlugin(Star):
                     else:
                         current_page += 1
                 else:
-                    print(f"账单获取失败: {data}")
+                    logger.error(f"[SiliconCloud] 账单获取失败: {data}")
                     break
             except Exception as e:
-                print(f"网络请求出错: {e}")
+                logger.error(f"[SiliconCloud] 网络请求出错: {e}")
                 break
         return all_data
 
@@ -134,7 +139,7 @@ class SiliconBillingPlugin(Star):
         today_data = await asyncio.to_thread(self.fetch_api_data_sync, times["today_start"], times["end_time"])
 
         if not month_data and not today_data:
-            return "❌ 获取账单数据失败，请检查配置（Cookie 或 x-subject-id）及网络状态。", []
+            return "❌ 获取账单数据失败，请前往控制台查看详细的报错日志以便定位问题（可能是配置失效或无网络）。", []
 
         key_stats = {}
 

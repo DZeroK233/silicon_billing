@@ -32,13 +32,13 @@
     "admin_ids": {
         "description": "需要管控指令的管理员唯一标识符列表",
         "type": "list",
-        "hint": "只有匹配这里的 ID 才能使用管理指令，普通用户只能查尾号。可通过 /sc help 查看自己的标识符。",
+        "hint": "只有匹配这里的 ID 才能使用管理指令，普通用户只能查尾号。可通过 /sc_help 查看自己的标识符。",
         "default": []
     },
     "key_limits": {
-        "description": "指定尾号监控的额度上限",
-        "type": "dict",
-        "hint": "由指令 /sc_add 写入的内容，也可在此手动编辑。格式为 {\"abcd\": 10.0}",
-        "default": {}
+        "description": "指定尾号监控的额度上限字典",
+        "type": "text",
+        "hint": "由指令 /sc_add 写入的内容，也可手动编写并保留 JSON 格式 {\"abcd\": 10.0}",
+        "default": "{}"
     }
 }

@@ -20,7 +20,14 @@ class SiliconBillingPlugin(Star):
         # AstrBot V4 规范：配置由 _conf_schema.json 定义，并由框架自动注入到 config 参数
         self.config = config
 
-        self.key_limits = self.config.get("key_limits", {})
+        limits_raw = self.config.get("key_limits", "{}")
+        if isinstance(limits_raw, dict):
+            self.key_limits = limits_raw
+        else:
+            try:
+                self.key_limits = json.loads(limits_raw)
+            except Exception:
+                self.key_limits = {}
 
         self.cached_stats = {}
         self.last_fetch_time = 0
@@ -194,11 +201,8 @@ class SiliconBillingPlugin(Star):
 
     @filter.command("sc")
     async def sc_cmd(self, event: AstrMessageEvent, arg: str = ""):
-        '''查询指定尾号的账单或获取帮助指令。所有人可用\n用法: /sc help 或 /sc 尾号'''
+        '''查询指定尾号的账单。用法: /sc 尾号'''
         arg = arg.strip()
-        if arg == "help" or arg == "":
-            yield event.plain_result(f"💡 您的唯一 ID (unified_msg_origin) 为：\n{event.unified_msg_origin}\n\n如果您是管理员，请将其填入插件配置的 admin_ids 列表中以获取管理指令执行权限。")
-            return
             
         # 缓存机制查询特定尾号
         tail = arg
@@ -208,7 +212,7 @@ class SiliconBillingPlugin(Star):
             return
             
         if tail not in stats:
-            yield event.plain_result(f"❌ 找不到尾号为 [{tail}] 的账单数据。")
+            yield event.plain_result(f"❌ 找不到 [{tail}] 的账单数据。")
             return
             
         data = stats[tail]
@@ -221,6 +225,12 @@ class SiliconBillingPlugin(Star):
             msg += f"\n▶ ⚠️ 注意：存在实际扣费！(本月实扣: {data['monthly_net']:.4f} 元)"
         
         yield event.plain_result(msg)
+
+
+    @filter.command("sc_help")
+    async def sc_help(self, event: AstrMessageEvent):
+        '''查询用户唯一ID'''
+        yield event.plain_result(f"💡 您的唯一 ID (unified_msg_origin) 为：\n{event.unified_msg_origin}\n\n如果您是管理员，请将其填入插件配置的 admin_ids 列表中以获取管理指令执行权限。")
 
     @filter.command("sc_check")
     async def sc_check(self, event: AstrMessageEvent):
@@ -242,7 +252,7 @@ class SiliconBillingPlugin(Star):
             yield event.plain_result("❌ 权限不足。")
             return
         self.key_limits[tail] = float(limit)
-        self.config["key_limits"] = self.key_limits
+        self.config["key_limits"] = json.dumps(self.key_limits, ensure_ascii=False, indent=2)
         self.config.save_config()
         yield event.plain_result(f"✅ 成功设置 Key [{tail}] 的限额为 {limit} 元。")
 
@@ -254,7 +264,7 @@ class SiliconBillingPlugin(Star):
             return
         if tail in self.key_limits:
             del self.key_limits[tail]
-            self.config["key_limits"] = self.key_limits
+            self.config["key_limits"] = json.dumps(self.key_limits, ensure_ascii=False, indent=2)
             self.config.save_config()
             yield event.plain_result(f"🗑️ 已删除 Key [{tail}] 的限额监控。")
         else:

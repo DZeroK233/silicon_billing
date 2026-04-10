@@ -17,6 +17,12 @@
         "default": "10:00",
         "hint": "格式如 10:00，即每天上午10点自动播报账单"
     },
+    "enable_cron": {
+        "description": "启用定时播报",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后将在到达 cron_time 指定时间时向设定的 QQ 自动推送。"
+    },
     "notify_qq": {
         "description": "定时发送账单提醒的 QQ 号",
         "type": "string",
@@ -28,5 +34,11 @@
         "type": "list",
         "hint": "只有匹配这里的 ID 才能使用管理指令，普通用户只能查尾号。可通过 /sc help 查看自己的标识符。",
         "default": []
+    },
+    "key_limits": {
+        "description": "指定尾号监控的额度上限",
+        "type": "dict",
+        "hint": "由指令 /sc_add 写入的内容，也可在此手动编辑。格式为 {\"abcd\": 10.0}",
+        "default": {}
     }
 }

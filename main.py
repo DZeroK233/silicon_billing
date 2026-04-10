@@ -20,11 +20,7 @@ class SiliconBillingPlugin(Star):
         # AstrBot V4 规范：配置由 _conf_schema.json 定义，并由框架自动注入到 config 参数
         self.config = config
 
-        # 本地数据文件路径 (用于持久化保存你的限额和绑定的会话)
-        self.data_dir = os.path.dirname(__file__)
-        self.limits_file = os.path.join(self.data_dir, "limits.json")
-
-        self.key_limits = self.load_json(self.limits_file, {})
+        self.key_limits = self.config.get("key_limits", {})
 
         self.cached_stats = {}
         self.last_fetch_time = 0
@@ -33,21 +29,6 @@ class SiliconBillingPlugin(Star):
         self.scheduler = AsyncIOScheduler()
         self.setup_cron()
         self.scheduler.start()
-
-    def load_json(self, filepath, default):
-        """读取本地持久化数据"""
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"加载数据失败 {filepath}: {e}")
-        return default
-
-    def save_json(self, filepath, data):
-        """保存本地持久化数据"""
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
 
     def setup_cron(self):
         """设置定时任务"""
@@ -261,7 +242,8 @@ class SiliconBillingPlugin(Star):
             yield event.plain_result("❌ 权限不足。")
             return
         self.key_limits[tail] = float(limit)
-        self.save_json(self.limits_file, self.key_limits)
+        self.config["key_limits"] = self.key_limits
+        self.config.save_config()
         yield event.plain_result(f"✅ 成功设置 Key [{tail}] 的限额为 {limit} 元。")
 
     @filter.command("sc_del")
@@ -272,7 +254,8 @@ class SiliconBillingPlugin(Star):
             return
         if tail in self.key_limits:
             del self.key_limits[tail]
-            self.save_json(self.limits_file, self.key_limits)
+            self.config["key_limits"] = self.key_limits
+            self.config.save_config()
             yield event.plain_result(f"🗑️ 已删除 Key [{tail}] 的限额监控。")
         else:
             yield event.plain_result(f"❌ 找不到尾号为 [{tail}] 的监控记录。")
@@ -297,6 +280,9 @@ class SiliconBillingPlugin(Star):
     # ==========================================
     async def cron_task(self):
         """定时任务执行主体"""
+        if not self.config.get("enable_cron", True):
+            return
+            
         notify_qq = self.config.get("notify_qq", "")
         if not notify_qq:
             return

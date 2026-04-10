@@ -218,13 +218,19 @@ class SiliconBillingPlugin(Star):
         data = stats[tail]
         limit = self.key_limits.get(tail)
         limit_str = f"{limit}" if limit is not None else "-"
+        
         msg = f"📊 SiliconCloud 账单速报 [{tail}]\n"
-        msg += f"▶ 本月累计: {data['monthly_total']:.4f} /{limit_str} 元\n"
+        
+        # 判断是否超限并显示不同样式
+        if limit is not None and data['monthly_total'] >= limit:
+            msg += f"⚠️ 【已超限】本月消耗: {data['monthly_total']:.4f} /{limit} 元\n"
+        else:
+            msg += f"▶ 本月累计: {data['monthly_total']:.4f} /{limit_str} 元\n"
+            
         msg += f"▶ 今日新增: {data['daily_total']:.4f} 元"
-        if data['monthly_net'] > 0:
-            msg += f"\n▶ ⚠️ 注意：存在实际扣费！(本月实扣: {data['monthly_net']:.4f} 元)"
         
         yield event.plain_result(msg)
+
 
 
     @filter.command("sc_help")

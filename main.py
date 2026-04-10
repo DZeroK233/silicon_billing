@@ -6,8 +6,7 @@ import urllib3
 import requests
 from astrbot.api.all import *
 # 显式导入 filter 和 AstrMessageEvent，覆盖 Python 的内置 filter
-from astrbot.api.event import filter, AstrMessageEvent 
-from astrbot.api.message_components import Plain, MessageChain
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # 禁用 requests 的 SSL 警告
@@ -24,10 +23,8 @@ class SiliconBillingPlugin(Star):
         # 本地数据文件路径 (用于持久化保存你的限额和绑定的会话)
         self.data_dir = os.path.dirname(__file__)
         self.limits_file = os.path.join(self.data_dir, "limits.json")
-        self.bind_file = os.path.join(self.data_dir, "bind.json")
 
         self.key_limits = self.load_json(self.limits_file, {})
-        self.notify_binds = self.load_json(self.bind_file, {})
 
         # 启动定时任务
         self.scheduler = AsyncIOScheduler()
@@ -188,23 +185,6 @@ class SiliconBillingPlugin(Star):
     # 机器人指令交互区域
     # ==========================================
 
-    @filter.command("sc_bind")
-    async def sc_bind(self, event: AstrMessageEvent):
-        '''绑定当前会话为定时账单接收处'''
-        platform = event.get_platform_name()
-        
-        # 尝试获取 session_id
-        session_id = getattr(event.message_obj, 'session_id', None)
-        if not session_id:
-            session_id = event.message_obj.group_id if event.message_obj.group_id else event.message_obj.sender_id
-            
-        self.notify_binds = {
-            "platform": platform,
-            "session_id": str(session_id)
-        }
-        self.save_json(self.bind_file, self.notify_binds)
-        yield event.plain_result("✅ 绑定成功！之后的定时账单汇报将会发送到这里。")
-
     @filter.command("sc_check")
     async def sc_check(self, event: AstrMessageEvent):
         '''立刻检查一次账单情况'''
@@ -249,7 +229,8 @@ class SiliconBillingPlugin(Star):
     # ==========================================
     async def cron_task(self):
         """定时任务执行主体"""
-        if not self.notify_binds:
+        notify_qq = self.config.get("notify_qq", "")
+        if not notify_qq:
             return
 
         report, alerts = await self.generate_report()
@@ -258,11 +239,21 @@ class SiliconBillingPlugin(Star):
         if alerts:
             msg += "\n\n" + "\n".join(alerts)
 
-        platform = self.notify_binds.get("platform")
-        session_id = self.notify_binds.get("session_id")
-
         try:
             chain = MessageChain().message(msg)
-            await self.context.send_message(platform, session_id, chain)
+            sent = False
+            for platform in self.context.platform_manager.platform_insts:
+                # 统一 session 格式: platform_id:message_type:session_id
+                msg_origin = f"{platform.meta().id}:FriendMessage:{notify_qq}"
+                try:
+                    success = await self.context.send_message(msg_origin, chain)
+                    if success:
+                        sent = True
+                        break # 发送成功一个平台即可
+                except Exception:
+                    continue
+            
+            if not sent:
+                print(f"[SiliconCloud] 定时账单发送失败，无法通过当前启用的平台发送到指定 QQ: {notify_qq}")
         except Exception as e:
-            print(f"[SiliconCloud] 定时账单发送失败: {e}")
+            print(f"[SiliconCloud] 定时账单发送错误: {e}")

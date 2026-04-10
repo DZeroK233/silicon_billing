@@ -16,5 +16,11 @@
         "type": "string",
         "default": "10:00",
         "hint": "格式如 10:00，即每天上午10点自动播报账单"
+    },
+    "notify_qq": {
+        "description": "定时发送账单提醒的 QQ 号",
+        "type": "string",
+        "default": "",
+        "hint": "填入你的 QQ 号（需配置 QQ 相关平台适配器）"
     }
 }

@@ -26,6 +26,9 @@ class SiliconBillingPlugin(Star):
 
         self.key_limits = self.load_json(self.limits_file, {})
 
+        self.cached_stats = {}
+        self.last_fetch_time = 0
+
         # 启动定时任务
         self.scheduler = AsyncIOScheduler()
         self.setup_cron()
@@ -87,8 +90,8 @@ class SiliconBillingPlugin(Star):
 
         headers = {
             "accept": "application/json, text/plain, */*",
-            "cookie": self.config.get("cookie", ""),
-            "x-subject-id": self.config.get("x_subject_id", ""),
+            "cookie": self.config.get("cookie", "").strip(),
+            "x-subject-id": self.config.get("x_subject_id", "").strip(),
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0"
         }
 
@@ -130,8 +133,11 @@ class SiliconBillingPlugin(Star):
                 break
         return all_data
 
-    async def generate_report(self):
-        """生成文本报告和告警，并返回"""
+    async def get_cached_stats(self, force_refresh=False):
+        now = datetime.now().timestamp()
+        if not force_refresh and self.cached_stats and (now - self.last_fetch_time < 3600):
+            return self.cached_stats
+            
         times = self.get_timestamps()
 
         # 使用 asyncio.to_thread 避免阻塞机器人，因为 requests 是同步的
@@ -139,7 +145,7 @@ class SiliconBillingPlugin(Star):
         today_data = await asyncio.to_thread(self.fetch_api_data_sync, times["today_start"], times["end_time"])
 
         if not month_data and not today_data:
-            return "❌ 获取账单数据失败，请前往控制台查看详细的报错日志以便定位问题（可能是配置失效或无网络）。", []
+            return None
 
         key_stats = {}
 
@@ -167,6 +173,17 @@ class SiliconBillingPlugin(Star):
             if tail in key_stats:
                 key_stats[tail]["daily_total"] = deduct + net
                 key_stats[tail]["daily_net"] = net
+                
+        self.cached_stats = key_stats
+        self.last_fetch_time = now
+        return self.cached_stats
+
+    async def generate_report(self, force_refresh=True):
+        """生成文本报告和告警，并返回"""
+        key_stats = await self.get_cached_stats(force_refresh=force_refresh)
+        
+        if key_stats is None:
+            return "❌ 获取账单数据失败，请前往控制台查看详细的报错日志以便定位问题（可能是配置失效或无网络）。", []
 
         report_lines = []
         alerts = []
@@ -190,11 +207,48 @@ class SiliconBillingPlugin(Star):
     # 机器人指令交互区域
     # ==========================================
 
+    def check_admin(self, event: AstrMessageEvent):
+        admin_ids = self.config.get("admin_ids", [])
+        return event.unified_msg_origin in admin_ids
+
+    @filter.command("sc")
+    async def sc_cmd(self, event: AstrMessageEvent, arg: str = ""):
+        '''查询指定尾号的账单或获取帮助指令。所有人可用\n用法: /sc help 或 /sc 尾号'''
+        arg = arg.strip()
+        if arg == "help" or arg == "":
+            yield event.plain_result(f"💡 您的唯一 ID (unified_msg_origin) 为：\n{event.unified_msg_origin}\n\n如果您是管理员，请将其填入插件配置的 admin_ids 列表中以获取管理指令执行权限。")
+            return
+            
+        # 缓存机制查询特定尾号
+        tail = arg
+        stats = await self.get_cached_stats(force_refresh=False)
+        if stats is None:
+            yield event.plain_result("❌ 获取账单数据失败，请提醒管理员检查配置。")
+            return
+            
+        if tail not in stats:
+            yield event.plain_result(f"❌ 找不到尾号为 [{tail}] 的账单数据。")
+            return
+            
+        data = stats[tail]
+        limit = self.key_limits.get(tail)
+        limit_str = f"{limit}" if limit is not None else "-"
+        msg = f"📊 SiliconCloud 账单速报 [{tail}]\n"
+        msg += f"▶ 本月累计: {data['monthly_total']:.4f} /{limit_str} 元\n"
+        msg += f"▶ 今日新增: {data['daily_total']:.4f} 元"
+        if data['monthly_net'] > 0:
+            msg += f"\n▶ ⚠️ 注意：存在实际扣费！(本月实扣: {data['monthly_net']:.4f} 元)"
+        
+        yield event.plain_result(msg)
+
     @filter.command("sc_check")
     async def sc_check(self, event: AstrMessageEvent):
-        '''立刻检查一次账单情况'''
+        '''立刻检查一次总账单情况'''
+        if not self.check_admin(event):
+            yield event.plain_result("❌ 权限不足，只有管理员才可执行此操作。")
+            return
         yield event.plain_result("正在拉取最新账单数据，请稍候...")
-        report, alerts = await self.generate_report()
+        report, alerts = await self.generate_report(force_refresh=True)
         msg = f"📊 SiliconCloud 账单速报\n\n{report}"
         if alerts:
             msg += "\n\n" + "\n".join(alerts)
@@ -203,6 +257,9 @@ class SiliconBillingPlugin(Star):
     @filter.command("sc_add")
     async def sc_add(self, event: AstrMessageEvent, tail: str, limit: float):
         '''添加/修改 Key 限额。用法: /sc_add 尾号 金额'''
+        if not self.check_admin(event):
+            yield event.plain_result("❌ 权限不足。")
+            return
         self.key_limits[tail] = float(limit)
         self.save_json(self.limits_file, self.key_limits)
         yield event.plain_result(f"✅ 成功设置 Key [{tail}] 的限额为 {limit} 元。")
@@ -210,6 +267,9 @@ class SiliconBillingPlugin(Star):
     @filter.command("sc_del")
     async def sc_del(self, event: AstrMessageEvent, tail: str):
         '''删除 Key 限额。用法: /sc_del 尾号'''
+        if not self.check_admin(event):
+            yield event.plain_result("❌ 权限不足。")
+            return
         if tail in self.key_limits:
             del self.key_limits[tail]
             self.save_json(self.limits_file, self.key_limits)
@@ -220,6 +280,9 @@ class SiliconBillingPlugin(Star):
     @filter.command("sc_list")
     async def sc_list(self, event: AstrMessageEvent):
         '''查看当前设定的所有 Key 限额'''
+        if not self.check_admin(event):
+            yield event.plain_result("❌ 权限不足。")
+            return
         if not self.key_limits:
             yield event.plain_result("📝 当前未设置任何限额监控，请使用 /sc_add 添加。")
             return
@@ -238,7 +301,7 @@ class SiliconBillingPlugin(Star):
         if not notify_qq:
             return
 
-        report, alerts = await self.generate_report()
+        report, alerts = await self.generate_report(force_refresh=True)
 
         msg = f"🔔 定时账单播报\n\n{report}"
         if alerts:

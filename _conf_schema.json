@@ -22,5 +22,11 @@
         "type": "string",
         "default": "",
         "hint": "填入你的 QQ 号（需配置 QQ 相关平台适配器）"
+    },
+    "admin_ids": {
+        "description": "需要管控指令的管理员唯一标识符列表",
+        "type": "list",
+        "hint": "只有匹配这里的 ID 才能使用管理指令，普通用户只能查尾号。可通过 /sc help 查看自己的标识符。",
+        "default": []
     }
 }

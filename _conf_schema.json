@@ -9,7 +9,7 @@
         "description": "请求头 x-subject-id",
         "type": "string",
         "default": "",
-        "hint": "填入你的 x-subject-id（如 apdjqglpeo）"
+        "hint": "填入你的 x-subject-id"
     },
     "cron_time": {
         "description": "每日定时检查与推送时间",

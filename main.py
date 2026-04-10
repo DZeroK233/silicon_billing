@@ -5,9 +5,9 @@ from datetime import datetime
 import urllib3
 import requests
 from astrbot.api.all import *
-# 【修复点】显式导入 filter 和 AstrMessageEvent，覆盖 Python 的内置 filter
+# 显式导入 filter 和 AstrMessageEvent，覆盖 Python 的内置 filter
 from astrbot.api.event import filter, AstrMessageEvent 
-from astrbot.api.message_components import Plain
+from astrbot.api.message_components import Plain, MessageChain
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # 禁用 requests 的 SSL 警告
@@ -18,10 +18,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class SiliconBillingPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
-        # 读取 config.json 中的配置
+        # AstrBot V4 规范：配置由 _conf_schema.json 定义，并由框架自动注入到 config 参数
         self.config = config
 
-        # 本地数据文件路径 (用于持久化保存你的限额和绑定的QQ)
+        # 本地数据文件路径 (用于持久化保存你的限额和绑定的会话)
         self.data_dir = os.path.dirname(__file__)
         self.limits_file = os.path.join(self.data_dir, "limits.json")
         self.bind_file = os.path.join(self.data_dir, "bind.json")
@@ -37,8 +37,11 @@ class SiliconBillingPlugin(Star):
     def load_json(self, filepath, default):
         """读取本地持久化数据"""
         if os.path.exists(filepath):
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"加载数据失败 {filepath}: {e}")
         return default
 
     def save_json(self, filepath, data):
@@ -48,6 +51,7 @@ class SiliconBillingPlugin(Star):
 
     def setup_cron(self):
         """设置定时任务"""
+        # 从配置中获取定时时间，名称需与 _conf_schema.json 中的字段对应
         cron_time = self.config.get("cron_time", "10:00")
         try:
             hour, minute = map(int, cron_time.split(":"))
@@ -80,6 +84,7 @@ class SiliconBillingPlugin(Star):
 
     def fetch_api_data_sync(self, start_time, end_time):
         url = "https://cloud.siliconflow.cn/panel-server/api/v1/bill/items/allocation_aggregate"
+        # 这里的 key 必须与 _conf_schema.json 中定义的一致
         headers = {
             "accept": "application/json, text/plain, */*",
             "cookie": self.config.get("cookie", ""),
@@ -127,12 +132,12 @@ class SiliconBillingPlugin(Star):
         """生成文本报告和告警，并返回"""
         times = self.get_timestamps()
 
-        # 使用 asyncio.to_thread 避免阻塞机器人的主事件循环
+        # 使用 asyncio.to_thread 避免阻塞机器人，因为 requests 是同步的
         month_data = await asyncio.to_thread(self.fetch_api_data_sync, times["month_start"], times["end_time"])
         today_data = await asyncio.to_thread(self.fetch_api_data_sync, times["today_start"], times["end_time"])
 
         if not month_data and not today_data:
-            return "获取账单数据失败，请检查 Cookie 或网络状态。", []
+            return "❌ 获取账单数据失败，请检查配置（Cookie 或 x-subject-id）及网络状态。", []
 
         key_stats = {}
 
@@ -169,7 +174,7 @@ class SiliconBillingPlugin(Star):
             limit_str = f"{limit}" if limit is not None else "-"
 
             line = f"[{tail}]：▶ 本月累计消耗: {stats['monthly_total']:.4f} /{limit_str}  (今日新增: {stats['daily_total']:.4f} 元)"
-            if stats['monthly_net'] > 0 or stats['daily_net'] > 0:
+            if stats['monthly_net'] > 0:
                 line += f"\n  ▶ ⚠️ 注意：存在实际扣费！(本月实扣: {stats['monthly_net']:.4f} 元)"
             report_lines.append(line)
 
@@ -177,7 +182,7 @@ class SiliconBillingPlugin(Star):
                 alerts.append(
                     f"⚠️ 【超限提醒】[{tail}] 本月消耗 {stats['monthly_total']:.4f} /{limit}，已达上限！(今日新增: {stats['daily_total']:.4f} 元)")
 
-        return "\n".join(report_lines) if report_lines else "当前无账单数据。", alerts
+        return "\n".join(report_lines) if report_lines else "当前无有效账单数据。", alerts
 
     # ==========================================
     # 机器人指令交互区域
@@ -186,10 +191,16 @@ class SiliconBillingPlugin(Star):
     @filter.command("sc_bind")
     async def sc_bind(self, event: AstrMessageEvent):
         '''绑定当前会话为定时账单接收处'''
-        # 记录下当前消息发送者所在的平台和 ID
+        platform = event.get_platform_name()
+        
+        # 尝试获取 session_id
+        session_id = getattr(event.message_obj, 'session_id', None)
+        if not session_id:
+            session_id = event.message_obj.group_id if event.message_obj.group_id else event.message_obj.sender_id
+            
         self.notify_binds = {
-            "provider_id": event.get_provider_id(),
-            "target_id": event.message_obj.sender_id  # 如果你想发到群里，这里可以改判断 group_id
+            "platform": platform,
+            "session_id": str(session_id)
         }
         self.save_json(self.bind_file, self.notify_binds)
         yield event.plain_result("✅ 绑定成功！之后的定时账单汇报将会发送到这里。")
@@ -206,14 +217,14 @@ class SiliconBillingPlugin(Star):
 
     @filter.command("sc_add")
     async def sc_add(self, event: AstrMessageEvent, tail: str, limit: float):
-        '''添加/修改 Key 限额。用法: /sc_add [尾号] [金额]'''
+        '''添加/修改 Key 限额。用法: /sc_add 尾号 金额'''
         self.key_limits[tail] = float(limit)
         self.save_json(self.limits_file, self.key_limits)
         yield event.plain_result(f"✅ 成功设置 Key [{tail}] 的限额为 {limit} 元。")
 
     @filter.command("sc_del")
     async def sc_del(self, event: AstrMessageEvent, tail: str):
-        '''删除 Key 限额。用法: /sc_del [尾号]'''
+        '''删除 Key 限额。用法: /sc_del 尾号'''
         if tail in self.key_limits:
             del self.key_limits[tail]
             self.save_json(self.limits_file, self.key_limits)
@@ -239,7 +250,6 @@ class SiliconBillingPlugin(Star):
     async def cron_task(self):
         """定时任务执行主体"""
         if not self.notify_binds:
-            print("[SiliconCloud] 定时播报未触发：未绑定接收方。请对机器人发送 /sc_bind")
             return
 
         report, alerts = await self.generate_report()
@@ -248,12 +258,11 @@ class SiliconBillingPlugin(Star):
         if alerts:
             msg += "\n\n" + "\n".join(alerts)
 
-        provider_id = self.notify_binds.get("provider_id")
-        target_id = self.notify_binds.get("target_id")
+        platform = self.notify_binds.get("platform")
+        session_id = self.notify_binds.get("session_id")
 
         try:
-            # 向绑定的 ID 发送消息
-            chain = MessageChain().message([Plain(msg)])
-            await self.context.send_message(provider_id, target_id, chain)
+            chain = MessageChain().message(msg)
+            await self.context.send_message(platform, session_id, chain)
         except Exception as e:
             print(f"[SiliconCloud] 定时账单发送失败: {e}")

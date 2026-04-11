@@ -144,12 +144,17 @@ class SiliconBillingPlugin(Star):
             tail = api_key[-4:]
             deduct = float(item.get("deductAmount", 0))
             net = float(item.get("netAmount", 0))
-            key_stats[tail] = {
-                "monthly_total": deduct + net,
-                "monthly_net": net,
-                "daily_total": 0.0,
-                "daily_net": 0.0
-            }
+            
+            if tail not in key_stats:
+                key_stats[tail] = {
+                    "monthly_total": 0.0,
+                    "monthly_net": 0.0,
+                    "daily_total": 0.0,
+                    "daily_net": 0.0
+                }
+            
+            key_stats[tail]["monthly_total"] += deduct + net
+            key_stats[tail]["monthly_net"] += net
 
         # 统计今日
         for item in today_data:
@@ -158,9 +163,17 @@ class SiliconBillingPlugin(Star):
             tail = api_key[-4:]
             deduct = float(item.get("deductAmount", 0))
             net = float(item.get("netAmount", 0))
-            if tail in key_stats:
-                key_stats[tail]["daily_total"] = deduct + net
-                key_stats[tail]["daily_net"] = net
+            
+            if tail not in key_stats:
+                key_stats[tail] = {
+                    "monthly_total": 0.0,
+                    "monthly_net": 0.0,
+                    "daily_total": 0.0,
+                    "daily_net": 0.0
+                }
+                
+            key_stats[tail]["daily_total"] += deduct + net
+            key_stats[tail]["daily_net"] += net
                 
         self.cached_stats = key_stats
         self.last_fetch_time = now
